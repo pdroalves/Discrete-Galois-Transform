@@ -3,6 +3,7 @@
 import unittest
 from math import cos, sin, pi
 from galois import GaloisInteger, modinv
+from multiprocessing import Pool
 
 p = 0xFFFFFFFF00000001 # 2**64 - 2**32 + 1
 
@@ -54,6 +55,102 @@ def idgt(X):
                 )
             )
     return x
+
+
+# Apply DGT
+def dgt_gentlemansande(x):
+    k = len(x)
+    x = [a if isinstance(a, GaloisInteger) else GaloisInteger(a) for a in x]
+
+    # Params
+    r = 7 ## Primitive root of p
+
+    assert (p-1)%k == 0
+    n = (p-1)/k
+
+    g = pow(r, n, p)
+    assert pow(g, k, p) == 1 # k-th primitive root of unity
+    gj = [pow(g, j, p) for j in range(k)]
+
+    #
+    X = list(x) # Copy because the algorithm is run in-place
+    m = k / 2
+    while m >= 1:
+        for j in range(m):
+            a = pow(gj[j], k / (2 * m), p)
+            for i in range(j, k, 2 * m):
+                xi = X[i]
+                xim = X[i + m]
+
+                X[i] = xi + xim
+                X[i + m] = a * (xi - xim)
+        m = m / 2
+    return X
+
+# def f(raw_data):
+#     print raw_data
+
+# # Apply DGT
+# def dgt_gentlemansande_parallel(x):
+#     k = len(x)
+#     x = [a if isinstance(a, GaloisInteger) else GaloisInteger(a) for a in x]
+
+#     # Params
+#     r = 7 ## Primitive root of p
+
+#     assert (p-1)%k == 0
+#     n = (p-1)/k
+
+#     g = pow(r, n, p)
+#     assert pow(g, k, p) == 1 # k-th primitive root of unity
+#     gj = [pow(g, j, p) for j in range(k)]
+
+#     #
+#     X = list(x) # Copy because the algorithm is run in-place
+#     m = k / 2
+#     with Pool() as pool:
+#         while m >= 1:
+#             data = zip(gj, [X]*k, [k]*k, [m]*k)
+#             for j in range(m):
+#                 a = pow(gj[j], k / (2 * m), p)
+#                 for i in range(j, k, 2 * m):
+#                     xi = X[i]
+#                     xim = X[i + m]
+
+#                     X[i] = xi + xim
+#                     X[i + m] = a * (xi - xim)
+#             m = m / 2
+#     return X
+
+def idgt_gentlemansande(x):
+    k = len(x)
+    x = [a if isinstance(a, GaloisInteger) else GaloisInteger(a) for a in x]
+
+    # Params
+    r = 7 ## Primitive root of p
+
+    assert (p-1)%k == 0
+    n = (p-1)/k
+
+    g = pow(r, n, p)
+    assert pow(g, k, p) == 1 # n-th primitive root of unity
+    invgj = [pow(g, (k - j) % k, p) for j in range(k)] # g^-i \equiv g^((k-i) mod k) mod p
+    #
+
+    X = list(x) # Copy because the algorithm is run in-place
+    m = 1
+    while m < k:
+        for j in range(m):
+            a = pow(invgj[j], k / (2 * m), p)
+            for i in range(j, k, 2 * m):
+                xi = X[i]
+                xim = X[i + m]
+
+                X[i] = xi + a * xim
+                X[i + m] = xi - a * xim
+        m = 2 * m
+    return [v*modinv(k,p) for v in X]
+
 
 #############################################################$$$$$$$$$$$$$$$$$$
 # Polynomial mul
@@ -108,6 +205,44 @@ def dgt_mul(a, b):
 
     return c
 
+# Multpĺication inside DGT's domain
+def dgt_gentlemansande_mul(a, b):
+    assert len(a) == len(b)
+    N = len(a)
+
+    # Initialize
+    a_folded = [GaloisInteger(x, y) for x, y in zip(a[:N/2], a[N/2:])]
+    b_folded = [GaloisInteger(x, y) for x, y in zip(b[:N/2], b[N/2:])]
+
+    # Compute h
+    assert pow(nthroots[N/2], N/2) == GaloisInteger(0, 1)
+    # assert nthroots[N/2] * invNthroots[N/2] == GaloisInteger(0, 1)
+    assert nthroots[N/2] * invNthroots[N/2] == GaloisInteger(1)
+
+    # Twist the folded signals
+    a_h = [a_folded[j] * pow(nthroots[N/2], j) for j in range(N / 2)]
+    b_h = [b_folded[j] * pow(nthroots[N/2], j) for j in range(N / 2)]
+
+    # Compute n/2 DGT
+    a_dgt = dgt_gentlemansande(a_h)
+    assert idgt_gentlemansande(a_dgt) == a_h
+    b_dgt = dgt_gentlemansande(b_h)
+    assert idgt_gentlemansande(b_dgt) == b_h
+
+    # Point-wise multiplication
+    c_dgt = [x * y for x, y in zip(a_dgt, b_dgt)]
+
+    # Compute n/2 IDGT
+    c_h = idgt_gentlemansande(c_dgt)
+
+    # Remove twisting factors
+    c_folded = [c_h[j] * pow(invNthroots[N/2], j) for j in range(N / 2)]
+
+    # Unfold output
+    c = [c_folded[j].re for j in range(N/2)] + [c_folded[j].imag for j in range(N/2)]
+
+    return c
+
 # Apply schoolbook polynomial multiplication and reduces by Z_q / <x^N + 1>
 def mul(a, b):
     assert len(a) == len(b)
@@ -138,6 +273,22 @@ class TestDGT(unittest.TestCase):
         b = range(512)
         self.assertEqual(
             dgt_mul(a, b),
+            mul(a, b)
+            )
+
+class TestDGTGentlemansande(unittest.TestCase):
+
+    def test_transformation_gentlemansande(self):
+        # Verifies if iDGT(DGT(x)) == x
+        x = range(512)
+        self.assertEqual(idgt_gentlemansande(dgt_gentlemansande(x)), x)
+
+    def test_mul_gentlemansande(self):
+        # Verifies multiplication in DGT's domain
+        a = range(512)
+        b = range(512)
+        self.assertEqual(
+            dgt_gentlemansande_mul(a, b),
             mul(a, b)
             )
 

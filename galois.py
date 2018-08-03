@@ -1,3 +1,6 @@
+#!/usr/env/python
+#coding: utf-8
+
 def egcd(a, b):
     if a == 0:
         return (b, 0, 1)
@@ -33,7 +36,7 @@ class GaloisInteger:
             self.p = p
         elif p is not None:
             raise Exception(
-                "Weird p! Received " + str(p)
+                "Weird pq! Received " + str(p)
                 )
 
     def __valid_operand(self, b):
@@ -89,18 +92,30 @@ class GaloisInteger:
     # Galois mul
     def __mul__(self, b):
         b = self.__valid_operand(b)
+        # https://stackoverflow.com/questions/19621686/complex-numbers-product-using-only-three-multiplications
+        # 
+        # S1=ac,S2=bd, and S3=(a+b)(c+d). Now you can compute the results as 
+        # A=S1−S2 and B=S3−S1−S2.
+        # 
+        s1 = self.re * b.re
+        s2 = self.imag * b.imag
+        s3 = (self.re + self.imag) * (b.re + b.imag) 
 
         return GaloisInteger(
-            (self.re * b.re - self.imag * b.imag) % self.p,
-            (self.re * b.imag + self.imag * b.re) % self.p
+            (s1 - s2) % self.p,
+            (s3 - s1 - s2) % self.p
             )
 
     def __rmul__(self, b):
         b = self.__valid_operand(b)
 
+        s1 = self.re * b.re
+        s2 = self.imag * b.imag
+        s3 = (self.re + self.imag) * (b.re + b.imag) 
+
         return GaloisInteger(
-            (self.re * b.re - self.imag * b.imag) % self.p,
-            (self.re * b.imag + self.imag * b.re) % self.p
+            (s1 - s2) % self.p,
+            (s3 - s1 - s2) % self.p
             )
 
     def __pow__(self, b):
@@ -116,3 +131,12 @@ class GaloisInteger:
             if(exp[i:i+1] == '1'):
                 value = value * self
         return value
+
+    def __div__(self, b):
+        assert type(b) in [int, long]
+        assert b != 0
+
+        return GaloisInteger(
+            self.re / b,
+            self.imag / b
+            )
