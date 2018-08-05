@@ -4,8 +4,16 @@ import unittest
 from math import cos, sin, pi
 from galois import GaloisInteger, modinv
 from multiprocessing import Pool
+from math import log
 
 p = 0xFFFFFFFF00000001 # 2**64 - 2**32 + 1
+def is_power2(n):
+    n = int(n)
+    while n>1:
+        if n/2 != n/2.0: #compare integer division to float division
+           return False
+        n = n/2
+    return True
 
 # Apply DGT
 def dgt(x):
@@ -56,10 +64,21 @@ def idgt(X):
             )
     return x
 
+# square and multiply
+def fast_expo(a, b):
+    r = 1
+    s = a
+    while b > 0:
+        if (b % 2) == 1:
+            r = r * s % p
+        s = s * s % p
+        b = b / 2
+    return r
 
 # Apply DGT
 def dgt_gentlemansande(x):
     k = len(x)
+    assert is_power2(k)
     x = [a if isinstance(a, GaloisInteger) else GaloisInteger(a) for a in x]
 
     # Params
@@ -71,59 +90,48 @@ def dgt_gentlemansande(x):
     g = pow(r, n, p)
     assert pow(g, k, p) == 1 # k-th primitive root of unity
     gj = [pow(g, j, p) for j in range(k)]
+    # aux = [
+    #     [
+    #         pow(g, (j * k) >>(ml+1), p) 
+    #         # (ml, j)
+    #         for ml in range(int(log(k,2)))
+    #     ]
+    #     for j in range(k)
+    #     ]
+    # print "k: %d, n: %d, g: %d" % (k, n, g)
+    # aux2 = []
+    # for a in aux:
+    #     aux2.extend(a)
+    # print aux2
 
     #
     X = list(x) # Copy because the algorithm is run in-place
-    m = k / 2
-    while m >= 1:
-        for j in range(m):
-            a = pow(gj[j], k / (2 * m), p)
-            for i in range(j, k, 2 * m):
-                xi = X[i]
-                xim = X[i + m]
+    for stride in range(int(log(k,2))):
+        m = k / (2<<stride)
 
-                X[i] = xi + xim
-                X[i + m] = a * (xi - xim)
-        m = m / 2
+        for l in range(k / 2):
+            j = l/(k/(2*m))
+            # a = aux[j][int(log(k,2)) - stride - 1] % p;
+            # print 2*m
+            a = pow(gj[j], k >> (int(log(k,2)) - stride), p)
+
+            i = j + (l % (k/(2*m)))*2*m
+        
+
+            xi = X[i]
+            xim = X[i + m]
+            # print "m: %d, i: %d, j: %d, jk: %d, a: %d, xi: %s, xim: %s" % (m, i, j, int(log(k,2)) - stride - 1, a, xi, xim)
+            X[i] = xi + xim
+            X[i + m] = a * (xi - xim)
+        # print "X[8]: %s, X[8+m]: %s (m: %d)" % (X[8], X[8+m], m)
+        # print X
     return X
 
-# def f(raw_data):
-#     print raw_data
 
-# # Apply DGT
-# def dgt_gentlemansande_parallel(x):
-#     k = len(x)
-#     x = [a if isinstance(a, GaloisInteger) else GaloisInteger(a) for a in x]
-
-#     # Params
-#     r = 7 ## Primitive root of p
-
-#     assert (p-1)%k == 0
-#     n = (p-1)/k
-
-#     g = pow(r, n, p)
-#     assert pow(g, k, p) == 1 # k-th primitive root of unity
-#     gj = [pow(g, j, p) for j in range(k)]
-
-#     #
-#     X = list(x) # Copy because the algorithm is run in-place
-#     m = k / 2
-#     with Pool() as pool:
-#         while m >= 1:
-#             data = zip(gj, [X]*k, [k]*k, [m]*k)
-#             for j in range(m):
-#                 a = pow(gj[j], k / (2 * m), p)
-#                 for i in range(j, k, 2 * m):
-#                     xi = X[i]
-#                     xim = X[i + m]
-
-#                     X[i] = xi + xim
-#                     X[i + m] = a * (xi - xim)
-#             m = m / 2
-#     return X
 
 def idgt_gentlemansande(x):
     k = len(x)
+    assert is_power2(k)
     x = [a if isinstance(a, GaloisInteger) else GaloisInteger(a) for a in x]
 
     # Params
@@ -133,21 +141,35 @@ def idgt_gentlemansande(x):
     n = (p-1)/k
 
     g = pow(r, n, p)
+    assert g != 0
+    print "g: %d" % g
     assert pow(g, k, p) == 1 # n-th primitive root of unity
-    invgj = [pow(g, (k - j) % k, p) for j in range(k)] # g^-i \equiv g^((k-i) mod k) mod p
-    #
+    invgj = [pow(g, (k - j), p) for j in range(k)] # g^-i \equiv g^((k-i) mod k) mod p
+    aux = [
+        [
+            pow(g, (((k - j) % k) * k) >> (ml+1), p) 
+            # (ml, j)
+            for ml in range(int(log(k,2)))
+        ]
+        for j in range(k)
+        ]
+    print invgj
 
     X = list(x) # Copy because the algorithm is run in-place
     m = 1
-    while m < k:
-        for j in range(m):
-            a = pow(invgj[j], k / (2 * m), p)
-            for i in range(j, k, 2 * m):
-                xi = X[i]
-                xim = X[i + m]
+    for stride in range(int(log(k,2))):
+        for l in range(k / 2):
+            j = l/(k/(2*m))
+            # a = aux[j][stride] % p;
+            a = pow(invgj[j], k >> (stride + 1), p)
+            i = j + (l % (k/(2*m)))*2*m
 
-                X[i] = xi + a * xim
-                X[i + m] = xi - a * xim
+            xi = X[i]
+            xim = X[i + m]
+            print "m: %d, i: %d, j: %d, jk: %d, a: %d, xi: %s, xim: %s" % (m, i, j, int(log(k,2)) - stride - 1, a, xi, xim)
+
+            X[i] = xi + a * xim
+            X[i + m] = xi - a * xim
         m = 2 * m
     return [v*modinv(k,p) for v in X]
 
@@ -278,12 +300,13 @@ class TestDGT(unittest.TestCase):
 
 class TestDGTGentlemansande(unittest.TestCase):
 
-    def test_transformation_gentlemansande(self):
+    def test_transformation(self):
         # Verifies if iDGT(DGT(x)) == x
-        x = range(512)
+        x = range(32)
+        print "\n".join([str(y) for y in dgt_gentlemansande(x)])
         self.assertEqual(idgt_gentlemansande(dgt_gentlemansande(x)), x)
 
-    def test_mul_gentlemansande(self):
+    def test_mul(self):
         # Verifies multiplication in DGT's domain
         a = range(512)
         b = range(512)
