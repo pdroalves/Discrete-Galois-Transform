@@ -2,15 +2,33 @@
 #include <iostream>
 #include <dgt/dgt.h>
 #include <assert.h>
-
+#include <map>
 #include <NTL/ZZ.h>
 NTL_CLIENT
 
-#define MAXDEGREE (int)8192 // REMOVE THIS
- __constant__ uint64_t gjk[MAXDEGREE/2];
- __constant__ uint64_t invgjk[MAXDEGREE/2];
- // __constant__ uint64_t PROOT; // g^k mod p
+#define MAXDEGREE (int)512 // REMOVE THIS
 
+std::map<int, GaloisInteger> NTHROOT = {
+  {256, (GaloisInteger){1100507988529617178, 13061373484646814047}},
+  {512, (GaloisInteger){5809945479226292735, 4344400649288295733}},
+  {1024, (GaloisInteger){1973388244086427726, 10274180581472164772}},
+  {2048, (GaloisInteger){2796647310976247644, 10276259027288899473}},
+  {4096, (GaloisInteger){1838446843991, 11906871093314535013}}
+};
+std::map<int, GaloisInteger> INVNTHROOT = {
+  {256, (GaloisInteger){1012656084342873654, 2372108221600941182}}
+};
+
+__constant__ uint64_t gjk[MAXDEGREE/2];
+__constant__ uint64_t invgjk[MAXDEGREE/2];
+
+// __constant__ uint64_t PROOT; // g^k mod p
+
+__global__ void normalize_dgt(
+  GaloisInteger* data,
+  const int N,
+  const int nresidues,
+  const uint64_t scale);
 
 // Returns the position of the highest bit
 int hob (int num)
@@ -169,6 +187,19 @@ __host__ __device__ GaloisInteger GIMul(GaloisInteger a, GaloisInteger b)
     return c;
 }
 
+// Computes a ^ b mod p
+__host__ __device__ GaloisInteger GIFastPow(GaloisInteger a, int b){
+  GaloisInteger r = {1, 0};
+  GaloisInteger s = a;
+  while(b > 0){
+    if(b % 2 == 1)
+      r = GIMul(r, s);
+    s = GIMul(s, s);
+    b /= 2;
+  }
+  return r;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Discrete Galois transform
 ////////////////////////////////////////////////////////////////////////////////
@@ -214,17 +245,6 @@ __global__ void dgt(
   return;
 }
 
-__global__ void normalize_dgt(
-  GaloisInteger* data,
-  const int N,
-  const int nresidues,
-  const uint64_t scale){
-
-  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if(tid < N * nresidues)
-    data[tid] = {s_mul(data[tid].re, scale), s_mul(data[tid].imag, scale)};
-}
-
 __host__ void execute_dgt(
   GaloisInteger* data,
   const int N,
@@ -256,12 +276,190 @@ __host__ void execute_dgt(
       conv<uint64_t>(NTL::InvMod(to_ZZ(N), to_ZZ(PRIMEP))));
 }
 
+__global__ void normalize_dgt(
+  GaloisInteger* data,
+  const int N,
+  const int nresidues,
+  const uint64_t scale){
+
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if(tid < N * nresidues)
+    data[tid] = {s_mul(data[tid].re, scale), s_mul(data[tid].imag, scale)};
+}
+
+
+/**
+ * @brief      Fold that as proposed by Badawi.
+ *             folded_data[j] = {data[j], data[j+N/2]}.
+ *
+ * @param      folded_data  The folded data
+ * @param      data         The data
+ * @param[in]  N            { parameter_description }
+ * @param[in]  nresidues    The nresidues
+ */
+__host__ void fold_dgt(
+  GaloisInteger *folded_data,
+  GaloisInteger *data,
+  const int N,
+  const int nresidues){
+  
+  /* 
+   * This method isn't need on cuPoly. Such operation may be executed on
+   *  poly_rns();
+   */
+
+  for(int rid = 0; rid < nresidues; rid++)
+    for(int cid = 0; cid < N/2; cid++)
+      folded_data[cid + rid * (N/2)] = {
+        data[cid + rid * N].re,
+        data[(cid + N/2) + rid * N].re 
+      };
+
+}
+
+/**
+ * @brief      Unfold that as proposed by Badawi.
+ *             folded_data[j] = {data[j], data[j+N/2]}.
+ *
+ * @param      data         The data
+ * @param      folded_data  The folded data
+ * @param[in]  N            { parameter_description }
+ * @param[in]  nresidues    The nresidues
+ */
+__host__ void unfold_dgt(
+  GaloisInteger *data,
+  GaloisInteger *folded_data,
+  const int N,
+  const int nresidues){
+  
+  /* 
+   * This method isn't need on cuPoly. Such operation may be executed on
+   *  poly_irns();
+   */
+
+  for(int rid = 0; rid < nresidues; rid++)
+    for(int cid = 0; cid < N/2; cid++){
+      data[cid + rid * N] = {
+        folded_data[cid + rid * (N/2)].re,
+        0,
+      };
+      data[(cid + N/2) + rid * N] = {
+        folded_data[cid + rid * (N/2)].imag,
+        0
+      };
+    }
+
+}
+
+__global__ void twist_dgt(
+  GaloisInteger* data,
+  const int N,
+  const int nresidues,
+  const GaloisInteger nthroot){
+
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const int cid = tid % N;
+
+  if(tid < N * nresidues)
+    data[tid] = GIMul(data[tid], GIFastPow(nthroot, cid));
+}
+
+
+__host__ void execute_twist_dgt(
+  GaloisInteger *data,
+  const int N,
+  const int nresidues,
+  const int direction){
+
+  const int size = N * nresidues;
+  const int ADDGRIDXDIM = (size%32 == 0? size/32 : size/32 + 1);
+  const dim3 gridDim(ADDGRIDXDIM);
+  const dim3 blockDim(32);
+
+  twist_dgt<<< gridDim, blockDim>>>(
+    data,
+    N,
+    nresidues,
+    (direction == FORWARD? NTHROOT[N] : INVNTHROOT[N]) );
+}
+
+
+__global__ void add_dgt(
+  GaloisInteger *c_data,
+  const GaloisInteger *a_data,
+  const GaloisInteger *b_data,
+  const int size){
+
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+  if(tid < size)
+    c_data[tid] = GIAdd(a_data[tid], b_data[tid]);
+}
+
+
+__host__ void execute_add_dgt(
+  GaloisInteger *c_data,
+  const GaloisInteger *a_data,
+  const GaloisInteger *b_data,
+  const int N,
+  const int nresidues){
+
+  const int size = N * nresidues;
+  const int ADDGRIDXDIM = (size%32 == 0? size/32 : size/32 + 1);
+  const dim3 gridDim(ADDGRIDXDIM);
+  const dim3 blockDim(32);
+
+  add_dgt<<< gridDim, blockDim>>>(
+    c_data,
+    a_data,
+    b_data,
+    size);
+}
+
+__global__ void mul_dgt(
+  GaloisInteger *c_data,
+  const GaloisInteger *a_data,
+  const GaloisInteger *b_data,
+  const int size){
+
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+
+  if(tid < size)
+    c_data[tid] = GIMul(a_data[tid], b_data[tid]);
+}
+
+
+__host__ void execute_mul_dgt(
+  GaloisInteger *c_data,
+  const GaloisInteger *a_data,
+  const GaloisInteger *b_data,
+  const int N,
+  const int nresidues){
+
+  const int size = N * nresidues;
+  const int ADDGRIDXDIM = (size%32 == 0? size/32 : size/32 + 1);
+  const dim3 gridDim(ADDGRIDXDIM);
+  const dim3 blockDim(32);
+
+  mul_dgt<<< gridDim, blockDim>>>(
+    c_data,
+    a_data,
+    b_data,
+    size);
+}
+
+
 __host__ void set_const_mem(const int k){
+  assert(NTHROOT.count(k) == 1);
+  assert(INVNTHROOT.count(k) == 1);
   assert(k <= MAXDEGREE);
+  assert(k > 0);
   assert((PRIMEP-1)%k == 0);
   const uint64_t n = (PRIMEP-1)/k;
   const uint64_t g = s_fast_pow((uint64_t)PRIMITIVE_ROOT, n);
   assert(s_fast_pow(g, k) == 1);
+  // assert(NTHROOT.count(k) == 1);
+  // assert(INVNTHROOT.count(k) == 1);
 
   // std::cout << "k: " << k << ", n: " << n << ", g: " << g << std::endl;
 

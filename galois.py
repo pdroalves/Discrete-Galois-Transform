@@ -140,3 +140,29 @@ class GaloisInteger:
             self.re / b,
             self.imag / b
             )
+
+
+#############################################################$$$$$$$$$$$$$$$$$$
+# nthroot
+#
+from random import randint
+
+def get_mod_order(p):
+    # In number theory, given an integer a and a positive integer n with gcd(a,n) = 1,
+    # the multiplicative order of a modulo n is the smallest positive integer k with 
+    # a^k \equiv 1 mod n
+    # 
+    for _ in xrange(10**5):
+        a = GaloisInteger(randint(0, p), randint(0, p))
+        assert egcd(a, p)[0] == 1
+        for i in xrange(1, p):
+            if pow(a, i, p) == 1:
+                return i
+    raise Exception("Couln't find a generator")
+
+def nthroot(n, p): 
+    f0 = GaloisInteger(65536, 4294967295)
+    f1 = GaloisInteger(65536, -4294967295)
+
+    g0 = get_mod_order(p)
+    g1 = get_mod_order(p)

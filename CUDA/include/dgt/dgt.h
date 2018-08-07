@@ -40,6 +40,33 @@ __host__ void execute_dgt(
   const int nresidues,
   const int direction // Forward or Inverse
   );
-__host__ void set_const_mem(const int k);
+void execute_twist_dgt(
+  GaloisInteger *data,
+  const int N,
+  const int nresidues,
+  const int direction);
+void fold_dgt(
+  GaloisInteger *folded_data,
+  GaloisInteger *data,
+  const int N,
+  const int nresidues);
+void unfold_dgt(
+  GaloisInteger *data,
+  GaloisInteger *folded_data,
+  const int N,
+  const int nresidues);
+void execute_add_dgt(
+  GaloisInteger *c_data,
+  const GaloisInteger *a_data,
+  const GaloisInteger *b_data,
+  const int N,
+  const int nresidues);
+void execute_mul_dgt(
+  GaloisInteger *c_data,
+  const GaloisInteger *a_data,
+  const GaloisInteger *b_data,
+  const int N,
+  const int nresidues);
+void set_const_mem(const int k);
 
 #endif

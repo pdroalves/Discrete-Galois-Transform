@@ -172,6 +172,47 @@ __host__ double runIDGT(int nresidues, int n){
   return compute_time_ms(start,stop)/N;
 }
 
+__host__ double runDGTMul(int nresidues, int n){
+  struct timespec start, stop;
+
+  // Setup
+  set_const_mem(n/2);
+  GaloisInteger *d_data;
+  cudaMalloc((void**)&d_data,nresidues * (n/2) * sizeof(GaloisInteger));
+  cudaCheckError();
+
+  // Benchmark
+  clock_gettime( CLOCK_REALTIME, &start);
+  for(int i = 0; i < N; i++)
+    execute_mul_dgt(d_data, d_data, d_data, (n/2), nresidues);
+  cudaDeviceSynchronize();
+  clock_gettime( CLOCK_REALTIME, &stop);
+
+  cudaFree(d_data);
+  return compute_time_ms(start,stop)/N;
+}
+
+
+__host__ double runDGTAdd(int nresidues, int n){
+  struct timespec start, stop;
+
+  // Setup
+  set_const_mem(n/2);
+  GaloisInteger *d_data;
+  cudaMalloc((void**)&d_data,nresidues * (n/2) * sizeof(GaloisInteger));
+  cudaCheckError();
+
+  // Benchmark
+  clock_gettime( CLOCK_REALTIME, &start);
+  for(int i = 0; i < N; i++)
+    execute_add_dgt(d_data, d_data, d_data, (n/2), nresidues);
+  cudaDeviceSynchronize();
+  clock_gettime( CLOCK_REALTIME, &stop);
+
+  cudaFree(d_data);
+  return compute_time_ms(start,stop)/N;
+}
+
  int main(int argc, char* argv[]){
     // Output precision
     std::cout << std::fixed;
@@ -182,6 +223,7 @@ __host__ double runIDGT(int nresidues, int n){
       "IFFT",
       "DGT",
       "IDGT",
+      "DGTMul",
     };
     std::vector<int> degrees_data = {
       2048,
@@ -225,6 +267,10 @@ __host__ double runIDGT(int nresidues, int n){
           diff = runDGT(k, *d);
         else if (*it == "IDGT")
           diff = runIDGT(k, *d);
+        else if (*it == "DGTMul")
+          diff = runDGTMul(k, *d);
+        else if (*it == "DGTAdd")
+          diff = runDGTAdd(k, *d);
         else 
           continue;
         // else if (*it == "Reduce")
