@@ -59,13 +59,35 @@ TARGET_LINK_LIBRARIES(
 # Samples
 # 
 CUDA_ADD_EXECUTABLE(
-    dgt
+    simple_dgt
     src/samples/simple_dgt.cu
     src/dgt_cuda.cu
 )
 
 TARGET_LINK_LIBRARIES(
-    dgt
+    simple_dgt
+    -lntl
+    -lgmp
+)
+CUDA_ADD_EXECUTABLE(
+    simple_add
+    src/samples/simple_add.cu
+    src/dgt_cuda.cu
+)
+
+TARGET_LINK_LIBRARIES(
+    simple_add
+    -lntl
+    -lgmp
+)
+CUDA_ADD_EXECUTABLE(
+    simple_mul
+    src/samples/simple_mul.cu
+    src/dgt_cuda.cu
+)
+
+TARGET_LINK_LIBRARIES(
+    simple_mul
     -lntl
     -lgmp
 )
