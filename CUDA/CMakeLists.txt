@@ -9,6 +9,8 @@ SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 FIND_PACKAGE(CUDA REQUIRED)
 FIND_PACKAGE(GTest REQUIRED)
+# FIND_PACKAGE(NTL REQUIRED)
+# FIND_PACKAGE(GMP REQUIRED)
 
 LIST(APPEND CUDA_NVCC_FLAGS "-G -std=c++11 -default-stream per-thread")
 
@@ -34,7 +36,11 @@ TARGET_LINK_LIBRARIES(
     -lntl 
     -lgmp 
 )
+ADD_TEST(DGTTests test)
 
+#
+# Benchmark
+#
 CUDA_ADD_EXECUTABLE(
     dgt_benchmark
     src/tests/benchmark.cu
@@ -49,4 +55,17 @@ TARGET_LINK_LIBRARIES(
     -lcufft
 )
 
-ADD_TEST(DGTTests test)
+#
+# Samples
+# 
+CUDA_ADD_EXECUTABLE(
+    dgt
+    src/samples/simple_dgt.cu
+    src/dgt_cuda.cu
+)
+
+TARGET_LINK_LIBRARIES(
+    dgt
+    -lntl
+    -lgmp
+)

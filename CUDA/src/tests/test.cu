@@ -200,7 +200,7 @@ TEST(DGT, Mul) {
   ZZ_p::init(to_ZZ(PRIMEP));
 
   for(int nresidues = 1; nresidues < 2; nresidues++)
-    for(int n = 512; n <= 512; n *= 2){
+    for(int n = 32; n <= 8192; n *= 2){
 
       ZZ_pX NTL_Phi;
       NTL::SetCoeff(NTL_Phi,0,conv<ZZ_p>(1));
@@ -296,7 +296,7 @@ TEST(DGT, Add) {
   ZZ_p::init(to_ZZ(PRIMEP));
 
   for(int nresidues = 1; nresidues < 2; nresidues++)
-    for(int n = 512; n <= 512; n *= 2){
+    for(int n = 32; n <= 8192; n *= 2){
 
       ZZ_pX NTL_Phi;
       NTL::SetCoeff(NTL_Phi,0,conv<ZZ_p>(1));

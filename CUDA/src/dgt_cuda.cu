@@ -6,29 +6,46 @@
 #include <NTL/ZZ.h>
 NTL_CLIENT
 
-#define MAXDEGREE (int)512 // REMOVE THIS
+#define MAXDEGREE (int)8192 // REMOVE THIS
 
 std::map<int, GaloisInteger> NTHROOT = {
-  {256, (GaloisInteger){1100507988529617178, 13061373484646814047}},
-  {512, (GaloisInteger){5809945479226292735, 4344400649288295733}},
-  {1024, (GaloisInteger){1973388244086427726, 10274180581472164772}},
-  {2048, (GaloisInteger){2796647310976247644, 10276259027288899473}},
-  {4096, (GaloisInteger){1838446843991, 11906871093314535013}}
+  {4, (GaloisInteger){17872535116924321793, 18446744035054843905}},
+  {8, (GaloisInteger){18446741870391328801, 18293621682117541889}},
+  {16, (GaloisInteger){13835058050988244993, 68719460336}},
+  {32, (GaloisInteger){18446664905516926977, 18446664903637878785}},
+  {64, (GaloisInteger){5006145799600815370, 13182758589097755684}},
+  {128, (GaloisInteger){1139268601170473317, 15214299942841048380}},
+  {256, (GaloisInteger){4169533218321950981, 11340503865284752770}},
+  {512, (GaloisInteger){1237460157098848423, 590072184190675415}},
+  {1024, (GaloisInteger){13631489165933064639, 9250462654091849156}},
+  {2048, (GaloisInteger){12452373509881738698, 10493048841432036102}},
+  {4096, (GaloisInteger){12694354791372265231, 372075061476485181}},
+  {8192, (GaloisInteger){9535633482534078963, 8920239275564743446}},
+  {16384, (GaloisInteger){9868966171728904500, 6566969707398269596}},
+  {32768, (GaloisInteger){10574165493955537594, 3637150097037633813}},
+  {65536, (GaloisInteger){2132094355196445245, 12930307277289315455}}
 };
 std::map<int, GaloisInteger> INVNTHROOT = {
-  {256, (GaloisInteger){1012656084342873654, 2372108221600941182}}
+  {4, (GaloisInteger){34359736320, 17868031517297999873}},
+  {8, (GaloisInteger){18311636080627023873, 18446741870391328737}},
+  {16, (GaloisInteger){18446739675663041537, 18446462594505048065}},
+  {32, (GaloisInteger){9223372049739972605, 9223372049739382781}},
+  {64, (GaloisInteger){3985917792403544159, 10871216858344511621}},
+  {128, (GaloisInteger){697250266387245748, 7269985899340929883}},
+  {256, (GaloisInteger){16440350318199496391, 8259263625103887671}},
+  {512, (GaloisInteger){11254465366323603399, 282547220712277683}},
+  {1024, (GaloisInteger){4772545667722300316, 8077569763565898552}},
+  {2048, (GaloisInteger){13028894352332048345, 9995848711590186809}},
+  {4096, (GaloisInteger){11525613835860693, 17335883825168514904}},
+  {8192, (GaloisInteger){17414606149056687587, 3916527805974289959}},
+  {16384, (GaloisInteger){9801605401783064476, 2749242888134484347}},
+  {32768, (GaloisInteger){10469048769509713349, 8715957816394874924}},
+  {65536, (GaloisInteger){15132804493885713016, 7997468840100395569}}
 };
+
 
 __constant__ uint64_t gjk[MAXDEGREE/2];
 __constant__ uint64_t invgjk[MAXDEGREE/2];
-
-// __constant__ uint64_t PROOT; // g^k mod p
-
-__global__ void normalize_dgt(
-  GaloisInteger* data,
-  const int N,
-  const int nresidues,
-  const uint64_t scale);
 
 // Returns the position of the highest bit
 int hob (int num)
@@ -209,7 +226,8 @@ __global__ void dgt(
   const int stride,
   const int N,
   const int nresidues,
-  const int direction // Forward or Inverse
+  const int direction, // Forward or Inverse
+  const uint64_t scale
   ){
 
   const int tid = threadIdx.x + blockDim.x * blockIdx.x;
@@ -235,9 +253,18 @@ __global__ void dgt(
       const GaloisInteger a = {s_fast_pow(invgjk[j], N >> (log2k - stride)), 0};
       // printf("m: %d, i: %d, j: %d, jk: %d, a: %llu, xi: %llu, xim: %llu\n", m, i, j, stride, a.re, xi.re, xim.re);
       
-      data[i + rid * N] = GIAdd(xi, GIMul(a, xim)); 
-      data[i + m + rid * N] = GISub(xi, GIMul(a, xim)); 
+      GaloisInteger new_xi = GIAdd(xi, GIMul(a, xim)); 
+      GaloisInteger new_xim = GISub(xi, GIMul(a, xim)); 
 
+      // Normalization on the last stride
+      if(m == 1){
+        new_xi = {s_mul(new_xi.re, scale), s_mul(new_xi.imag, scale)};
+        new_xim = {s_mul(new_xim.re, scale), s_mul(new_xim.imag, scale)};
+      }
+      
+      // Write to global memory
+      data[i + rid * N] = new_xi;
+      data[i + m + rid * N] = new_xim;
     }
 
   }
@@ -254,37 +281,20 @@ __host__ void execute_dgt(
 
   // To-do: Assert N is a power of 2
   const int halfsize = (N / 2) * nresidues;
-  const int fullsize = N * nresidues;
-  const int halfADDGRIDXDIM = (halfsize%32 == 0? halfsize/32 : halfsize/32 + 1);
-  const int fullADDGRIDXDIM = (fullsize%32 == 0? fullsize/32 : fullsize/32 + 1);
+  const int halfADDGRIDXDIM = (halfsize%64 == 0? halfsize/64 : halfsize/64 + 1);
   const dim3 halfgridDim(halfADDGRIDXDIM);
-  const dim3 fullgridDim(fullADDGRIDXDIM);
-  const dim3 blockDim(32);
+  const dim3 blockDim(64);
 
-  for(int stride = 0; stride < hob(N); stride++)
+  for(int stride = 0; stride < hob(N); stride++){
     dgt<<< halfgridDim, blockDim>>>(
       data,
       (direction == FORWARD? stride : hob(N) - stride - 1),
       N,
       nresidues,
-      direction );
-  if(direction == INVERSE)
-    normalize_dgt<<< fullgridDim, blockDim>>>(
-      data,
-      N,
-      nresidues,
-      conv<uint64_t>(NTL::InvMod(to_ZZ(N), to_ZZ(PRIMEP))));
-}
-
-__global__ void normalize_dgt(
-  GaloisInteger* data,
-  const int N,
-  const int nresidues,
-  const uint64_t scale){
-
-  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  if(tid < N * nresidues)
-    data[tid] = {s_mul(data[tid].re, scale), s_mul(data[tid].imag, scale)};
+      direction,
+      conv<uint64_t>(NTL::InvMod(to_ZZ(N), to_ZZ(PRIMEP)))
+      );
+  }
 }
 
 
@@ -450,18 +460,14 @@ __host__ void execute_mul_dgt(
 
 
 __host__ void set_const_mem(const int k){
-  assert(NTHROOT.count(k) == 1);
-  assert(INVNTHROOT.count(k) == 1);
+  if(NTHROOT.count(k) < 1 || INVNTHROOT.count(k) < 1)
+    std::cerr << "WARNING! I don't know the " << k << "th-root of i" << std::endl;
   assert(k <= MAXDEGREE);
   assert(k > 0);
   assert((PRIMEP-1)%k == 0);
   const uint64_t n = (PRIMEP-1)/k;
   const uint64_t g = s_fast_pow((uint64_t)PRIMITIVE_ROOT, n);
   assert(s_fast_pow(g, k) == 1);
-  // assert(NTHROOT.count(k) == 1);
-  // assert(INVNTHROOT.count(k) == 1);
-
-  // std::cout << "k: " << k << ", n: " << n << ", g: " << g << std::endl;
 
   // Compute the matrix
   uint64_t *h_gjk = (uint64_t*) malloc (k * sizeof(uint64_t));
@@ -471,7 +477,6 @@ __host__ void set_const_mem(const int k){
   for (int j = 0; j < k/2; j++)
     h_gjk[j] = s_fast_pow(g, j);
   for (int j = 0; j < k/2; j++)
-    // h_invgjk[j] = conv<uint64_t>(NTL::InvMod(to_ZZ(s_fast_pow(g, j)), to_ZZ(PRIMEP)));
     h_invgjk[j] = s_fast_pow(g, (k - j));
 
   cudaMemcpyToSymbol(
@@ -487,13 +492,6 @@ __host__ void set_const_mem(const int k){
     k/2 * sizeof(uint64_t)
     );
   cudaCheckError()
-
-  // cudaMemcpyToSymbol(
-  //   PROOT,
-  //   &g,
-  //   sizeof(uint64_t)
-  //   );
-  // cudaCheckError()
 
   free(h_gjk);
   free(h_invgjk);
